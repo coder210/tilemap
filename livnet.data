@@ -315,7 +315,303 @@ function ecs:update2()
 end
 
 
-return ecs;local c = requirex "core"
+return ecs;local game = {};
+
+
+local resources = {};
+resources.textures = {};
+
+resources.get_texture = function(renderer, name)
+        local texture, w, h;
+        if resources.textures[name] then
+                texture = resources.textures[name];
+        else
+                texture, w, h = sdl.create_texturex(renderer, "resources/" .. name);
+                resources.textures[name] = texture;
+        end
+        return texture;
+end
+
+
+local tilemap = {};
+tilemap.tiles = {};
+tilemap.objects = {};
+
+tilemap.handle_tile = function (tileset, key, id)
+        local is_tile = false;
+        for _, tile in ipairs(tileset.tiles) do
+                if tile.id == id then
+                        is_tile = true;
+                        if tile.animation then
+                                tilemap.tiles[key] = {
+                                        image = tileset.image,
+                                        animation = tile.animation,
+                                        columns = tileset.columns,
+                                        grid = tileset.grid,
+                                };
+                        elseif tile.image then
+                                tilemap.tiles[key] = {
+                                        image = tile.image,
+                                        grid = {
+                                                width = 0,
+                                                height = tile.height,
+                                        },
+                                        s_rect = {
+                                                x = 0,
+                                                y = 0,
+                                                w = tile.width,
+                                                h = tile.height,
+                                        },
+                                        d_rect = {
+                                                x = 0,
+                                                y = 0,
+                                                w = tile.width,
+                                                h = tile.height,
+                                        }
+                                }
+                        end
+                        break;
+                end
+        end
+
+        if not is_tile then
+                local columns = tileset.columns;
+                local grid = tileset.grid;
+                local row, col;
+                if id < columns then
+                        row = 0;
+                        col = id;
+                else
+                        row = math.floor(id / columns);
+                        col = id % columns;
+                end
+
+                tilemap.tiles[key] = {
+                        image = tileset.image,
+                        s_rect = {
+                                x = col * grid.width,
+                                y = row * grid.height,
+                                w = grid.width,
+                                h = grid.height
+                        },
+                        d_rect = {
+                                x = 0,
+                                y = 0,
+                                w = grid.width,
+                                h = grid.height
+                        },
+                        grid = grid,
+                };
+        end
+end
+
+tilemap.handle_tileset = function (tileset)
+        for i = 0, tileset.tilecount - 1, 1 do
+                local key = string.format("%s_%d", tileset.name, i + tileset.firstgid);
+                tilemap.handle_tile(tileset, key, i);
+        end
+end
+
+tilemap.get_tile = function (tilesets, gid)
+        local result = nil;
+        for _, tile in ipairs(tilesets) do
+                if gid >= tile.firstgid then
+                        result = tile;
+                end
+        end
+        if result then
+                local key = string.format("%s_%d", result.name, gid);
+                return tilemap.tiles[key];
+        else
+                return nil;
+        end
+end
+
+
+local function new_animation(tile, x, y)
+        local inst = {};
+        local image = tile.image;
+        local clips = {};
+        local curr_frame = 1;
+        local grid = tile.grid;
+        local last_time = utils.current_time();
+
+        for _, config in ipairs(tile.animation) do
+                local clip = {};
+                clip.duration = config.duration;
+                local row, col;
+                if config.tileid < tile.columns then
+                        row = 0;
+                        col = config.tileid;
+                else
+                        row = math.floor(config.tileid / tile.columns);
+                        col = config.tileid % tile.columns;
+                end
+
+                clip.s_rect = {
+                        x = col * grid.width,
+                        y = row * grid.height,
+                        w = grid.width,
+                        h = grid.height
+                };
+                clip.d_rect = { x = x, y = y, w = grid.width, h = grid.height };
+                table.insert(clips, clip);
+        end
+
+        inst.update = function (curr_time)
+                local clip = clips[curr_frame];
+                if last_time + clip.duration > curr_time then
+                        return;
+                end
+                if curr_frame % #clips == 0 then
+                        curr_frame = 1;
+                else
+                        curr_frame = curr_frame + 1;
+                end
+
+                last_time = curr_time;
+        end
+
+        inst.render = function (camera, renderer)
+                local clip = clips[curr_frame];
+                local center = { x = 0,y = -clip.d_rect.h };
+                local texture = resources.get_texture(renderer, image);
+                local x = clip.d_rect.x - camera.position.x;
+                local y = clip.d_rect.y - camera.position.y;
+                local d_rect = {
+                        x = x,
+                        y = y,
+                        w = clip.d_rect.w,
+                        h = clip.d_rect.h
+                }
+
+                sdl.render_texture_rotated(renderer, texture, clip.s_rect, d_rect, 0, center, 0);
+                --sdl.render_rect(renderer, x, y, clip.d_rect.w, clip.d_rect.h);
+        end
+
+        return inst;
+end
+
+
+tilemap.new_sprite = function(tile, x, y)
+        local inst = {};
+        local image = tile.image;
+        local s_rect = {
+                x = tile.s_rect.x,
+                y = tile.s_rect.y,
+                w = tile.s_rect.w,
+                h = tile.s_rect.h
+        };
+        local d_rect = {
+                x = x,
+                y = y,
+                w = tile.d_rect.w,
+                h = tile.d_rect.h
+        };
+        inst.update = function (current_time)
+
+        end
+        inst.render = function(camera, renderer)
+                local center = { x = 0, y = 0 };
+                local texture = resources.get_texture(renderer, image);
+                local d_rect = {
+                        x = d_rect.x - camera.position.x,
+                        y = d_rect.y - camera.position.y,
+                        w = d_rect.w,
+                        h = d_rect.h
+                }
+                sdl.render_texture_rotated(renderer, texture, s_rect, d_rect, 0, center, 0);
+                --sdl.render_rect(renderer, d_rect.x, d_rect.y, d_rect.w, d_rect.h);
+        end
+
+        return inst;
+end
+
+tilemap.handle_tilelayer = function(map, layer)
+        for index, gid in ipairs(layer.data) do
+                local i = index - 1;
+                local row, col;
+                if i < layer.width then
+                        row = 0;
+                        col = i;
+                else
+                        row = math.floor(i / layer.width);
+                        col = i % layer.width;
+                end
+
+                local x = col * map.tilewidth;
+                local y = row * map.tileheight;
+
+                if gid ~= 0 then
+                        local tile = tilemap.get_tile(map.tilesets, gid);
+                        if tile then
+                                y = y + (map.tileheight - tile.grid.height);
+                                if tile.animation then
+                                        local anim = new_animation(tile, x, y);
+                                        table.insert(tilemap.objects, anim);
+                                else
+                                        local sprite = tilemap.new_sprite(tile, x, y);
+                                        table.insert(tilemap.objects, sprite);
+                                end
+                        end
+                end
+        end
+end
+
+tilemap.handle_imagelayer = function(map, layer)
+
+end
+
+local objects = {};
+
+tilemap.handle_objectgroup = function (map, layer)
+        objects = layer.objects;
+end
+
+tilemap.load = function (map)
+        for _, tileset in ipairs(map.tilesets) do
+                tilemap.handle_tileset(tileset);
+        end
+
+        for _, layer in ipairs(map.layers) do
+                if layer.visible then
+                        if layer.type == "tilelayer" then
+                                tilemap.handle_tilelayer(map, layer);
+                        elseif layer.type == "imagelayer" then
+                                tilemap.handle_imagelayer(map, layer);
+                        elseif layer.type == "objectgroup" then
+                                tilemap.handle_objectgroup(map, layer);
+                        end
+                end
+        end
+end
+
+tilemap.render = function(camera, renderer, current_time)
+        for _, obj in pairs(tilemap.objects) do
+                obj.update(current_time);
+                obj.render(camera, renderer);
+        end
+
+        for _, obj in ipairs(objects) do
+                local rect = {
+                        x = obj.x - camera.position.x,
+                        y = obj.y - camera.position.y,
+                        w = obj.width,
+                        h = obj.height
+                }
+                sdl.render_rect(renderer, rect.x, rect.y, rect.w, rect.h);
+                --sdl.log("render rect");
+        end
+end
+
+
+
+
+game.load_tilemap = tilemap.load;
+game.render_tilemap = tilemap.render;
+
+
+return game;local c = requirex "core"
 
 local livnet = {}
 livnet.c = c;
@@ -3762,7 +4058,7 @@ return {
       id = 6,
       name = "collision",
       class = "",
-      visible = false,
+      visible = true,
       opacity = 1,
       offsetx = 0,
       offsety = 0,
@@ -15581,8 +15877,8 @@ livnet.start(function ()
         -- local gpu = livnet.launch(root .. "gpu.lua");
         -- livnet.named(gpu, "gpu");
 
-        -- local ui = livnet.launch(root .. "ui.lua");
-        -- livnet.named(ui, "ui");
+        --local ui = livnet.launch(root .. "ui.lua");
+        --livnet.named(ui, "ui");
 
         -- local framework = livnet.launch(root .. "framework.lua");
         -- livnet.named(framework, "framework");
@@ -15590,8 +15886,8 @@ livnet.start(function ()
         -- local audio = livnet.launch(root .. "audio.lua");
         -- livnet.named(audio, "audio");
         
-        local tilemap = livnet.launch(root .. "tilemap.lua");
-        livnet.named(tilemap, "tilemap");
+        --local tilemap = livnet.launch(root .. "tilemap.lua");
+        --livnet.named(tilemap, "tilemap");
 
         livnet.exit_func(function ()
                 livnet.log("bootstrap service exit");
@@ -16811,10 +17107,11 @@ livnet.start(function()
         livnet.exit();
 end);
 local livnet = requirex "livnet"
+local game = requirex "game"
 local map = requirex "map"
 
-local PIXELS_PER_METER = 100;
 
+local PIXELS_PER_METER = 100;
 local SDL_EVENT_KEY_DOWN = 768;
 local SDL_SCANCODE_ESCAPE = 41;
 local SDL_SCANCODE_Q = 41;
@@ -16848,270 +17145,12 @@ local function handle_keydown_event(scancode)
         end
 end
 
-local function find_tile(gid)
-        local result = nil;
-        for _, tile in ipairs(map.tilesets) do
-                if gid >= tile.firstgid then
-                        result = tile;
-                end
-        end
-        return result;
-end
-
-
-local function new_animation(texture, animation, columns, grid, x, y)
-        local inst = {};
-        inst.texture = texture;
-        local clips = {};
-        local last_time = utils.current_time();
-        local curr_frame = 1;
-
-        for _, config in ipairs(animation) do
-                local clip = {};
-                clip.duration = config.duration;
-                local row, col;
-                if config.tileid < columns then
-                        row = 0;
-                        col = config.tileid;
-                else
-                        row = math.floor(config.tileid / columns);
-                        col = config.tileid % columns;
-                end
-
-                --livnet.log("row:" .. row .. " col:" .. col);
-
-                clip.s_rect = {
-                        x = col * grid.width,
-                        y = row * grid.height,
-                        w = grid.width,
-                        h = grid.height
-                };
-                clip.d_rect = { x = x, y = y, w = grid.width, h = grid.height };
-                table.insert(clips, clip);
-        end
-
-        inst.update = function (curr_time)
-                local clip = clips[curr_frame];
-                if last_time + clip.duration > curr_time then
-                        return;
-                end
-             
-                --livnet.log(curr_frame);
-                if curr_frame % #clips == 0 then
-                        curr_frame = 1;
-                else
-                        curr_frame = curr_frame + 1;
-                end
-
-                last_time = curr_time;
-        end
-
-        inst.render = function (renderer)
-                local clip = clips[curr_frame];
-                local center = {x=0,y=-clip.d_rect.h};
-
-                local x = clip.d_rect.x - camera.position.x;
-                local y = clip.d_rect.y - camera.position.y;
-                local d_rect = {
-                        x = x,
-                        y = y,
-                        w = clip.d_rect.w,
-                        h = clip.d_rect.h
-                }
-
-                sdl.render_texture_rotated(renderer, inst.texture, clip.s_rect, d_rect, 0, center, 0);
-                --sdl.render_rect(renderer, x, y, clip.d_rect.w, clip.d_rect.h);
-        end
-
-        return inst;
-end
-
-
-local function new_sprite2(tile, x, y)
-        local inst = {};
-        inst.texture = tile.texture;
-        local s_rect = {
-                x = tile.s_rect.x,
-                y = tile.s_rect.y,
-                w = tile.s_rect.w,
-                h = tile.s_rect.h
-        };
-        local d_rect = {
-                x = x,
-                y = y,
-                w = tile.d_rect.w,
-                h = tile.d_rect.h
-        };
-
-        inst.update = function (curr_time)
-
-        end
-
-        inst.render = function(renderer)
-                local center = { x = 0, y = 0 };
-                local x2 = d_rect.x - camera.position.x;
-                local y2 = d_rect.y - camera.position.y;
-                local d_rect = {
-                        x = x2,
-                        y = y2,
-                        w = d_rect.w,
-                        h = d_rect.h
-                }
-                sdl.render_texture_rotated(renderer, inst.texture, s_rect, d_rect, 0, center, 0);
-                --sdl.render_rect(renderer, x, y, d_rect.w, d_rect.h);
-        end
-
-        return inst;
-end
-
-
-local tiles = {};
-local animations = {};
-local textures = {};
-
-local get_texture = function (renderer, name)
-        local texture, w, h;
-        if textures[name] then
-                texture = textures[name];
-        else
-                texture, w, h = sdl.create_texturex(renderer, "resources/" .. name);
-                --livnet.log("texture:" .. type(texture));
-                textures[name] = texture;
-        end
-        return texture;
-end
-
-
-
-local handle_tileset = function(tileset)
-        for i = 0, tileset.tilecount - 1, 1 do
-                local key = string.format("%s_%d", tileset.name, i + tileset.firstgid);
-
-                local is_tile = false;
-                for _, tile in ipairs(tileset.tiles) do
-                        if tile.id == i then
-                                is_tile = true;
-                                if tile.animation then
-                                        livnet.log(key);
-                                        local texture = get_texture(renderer, tileset.image);
-                                        tiles[key] = {
-                                                texture = texture,
-                                                animation = tile.animation,
-                                                columns = tileset.columns,
-                                                grid = tileset.grid,
-                                        };
-                                elseif tile.image then
-                                        local texture = get_texture(renderer, tile.image);
-                                        tiles[key] = {
-                                                texture = texture,
-                                                grid = {
-                                                        width = 0,
-                                                        height = tile.height,
-                                                },
-                                                s_rect = {
-                                                        x = 0,
-                                                        y = 0,
-                                                        w = tile.width,
-                                                        h = tile.height,
-                                                },
-                                                d_rect = {
-                                                        x = 0,
-                                                        y = 0,
-                                                        w = tile.width,
-                                                        h = tile.height,
-                                                }
-                                        }
-                                end
-                                break;
-                        end
-                end
-
-                if not is_tile then
-                        local texture = get_texture(renderer, tileset.image);
-                        local id = i;
-                        local columns = tileset.columns;
-                        local grid = tileset.grid;
-                        -- tiles[key] = {
-                        --         texture = texture,
-                        --         id = id,
-                        --         columns = columns,
-                        --         grid = grid,
-                        -- };
-
-                        local row, col;
-                        if id < columns then
-                                row = 0;
-                                col = id;
-                        else
-                                row = math.floor(id / columns);
-                                col = id % columns;
-                        end
-
-                        local s_rect = {
-                                x = col * grid.width,
-                                y = row * grid.height,
-                                w = grid.width,
-                                h = grid.height
-                        };
-                        local d_rect = { x = 0, y = 0, w = grid.width, h = grid.height };
-                        tiles[key] = {
-                                texture = texture,
-                                s_rect = s_rect,
-                                d_rect = d_rect,
-                                grid = grid,
-                        };
-                end
-        end
-end
-
-
-local animtt = {};
-
-
-local handle_layer = function(layer)
-        for index, gid in ipairs(layer.data) do
-                local i = index - 1;
-                local row, col;
-                if i < layer.width then
-                        row = 0;
-                        col = i;
-                else
-                        row = math.floor(i / layer.width);
-                        col = i % layer.width;
-                end
-
-                local x = col * map.tilewidth;
-                local y = row * map.tileheight;
-
-                if gid ~= 0 then
-                        local tile = find_tile(gid);
-                        local key = string.format("%s_%d", tile.name, gid);
-                        local tile2 = tiles[key];
-                        if tile2 then
-                                --livnet.log(key .. " i:" .. i .. " col:" .. col .. " row:" .. row);
-                                y = y + (map.tileheight - tile2.grid.height);
-                                if tile2.animation then
-                                        local anim = new_animation(tile2.texture, tile2.animation, tile2.columns,
-                                                tile2.grid, x, y);
-                                        table.insert(animations, anim);
-                                else
-                                        --local sprite = new_sprite(tile2, x, y);
-                                        local sprite = new_sprite2(tile2, x, y);
-                                        table.insert(animations, sprite);
-                                end
-                        end
-                        --livnet.log(cjson.encode(tile));
-                end
-
-                -- if i > 60 * 2 then
-                --         break;
-                -- end
-        end
-end
-
 
 livnet.start(function()
         livnet.log("ui");
+
+        livnet.alias("tilemap");
+
         local ok, width, height;
 
         sdl.set_app_metadata("tilemap", "1.0", "com.livnet.tilemap");
@@ -17123,9 +17162,6 @@ livnet.start(function()
         livnet.log("height:" .. map.height * map.tileheight);
 
 
-        -- local texture1, w, h = sdl.create_texturex(renderer, "resources/" .. foam.image);
-        -- livnet.log("w:" .. w .. " h:" .. h);
-
         ok, width, height = sdl.get_window_size(window);
 
         livnet.dispatch("sdl_event", function(data, sz, source, ...)
@@ -17136,26 +17172,7 @@ livnet.start(function()
                 end
         end)
 
-        -- local inst = call.new(100);
-        -- local arr = {1, 4, 7, 10, 13, 16, 19, 22};
-        -- local curr_anim_frame = 1;
-
-        -- local gw = foam.grid.width;
-        -- local gh = foam.grid.height;
-        -- local center = { x = 0, y = 0 };
-
-        for _, tileset in ipairs(map.tilesets) do
-                handle_tileset(tileset);
-        end
-
-
-        for _, layer in ipairs(map.layers) do
-                if layer.visible and layer.type == "tilelayer" then
-                        livnet.log("layer_name:" .. layer.name);
-                        handle_layer(layer);
-                end
-        end
-        
+        game.load_tilemap(map);
 
 
         livnet.dispatch("response", function(data, sz, source, ...)
@@ -17164,40 +17181,15 @@ livnet.start(function()
                 
                 sdl.set_render_draw_color(renderer, 255, 0, 0, 255);
                 local current_time = utils.current_time();
-                livnet.log("tick============:" .. current_time);
-                for key, anim in pairs(animations) do
-                        anim.update(current_time);
-                end
 
-                for key, anim in pairs(animations) do
-                        anim.render(renderer);
-                end
-
-                -- call.update(inst, utils.current_time(), function ()
-                --         if curr_anim_frame % #arr == 0 then
-                --                 curr_anim_frame = 1;
-                --         else
-                --                 curr_anim_frame = curr_anim_frame+1;
-                --         end
-                -- end);
-
-                -- local s_rect = { x = gw * arr[curr_anim_frame], y = 0, w = gw, h = gh };
-                -- local d_rect = { x = 0, y = 0, w = gw, h = gh };
-                -- sdl.render_texture_rotated(renderer, texture1, s_rect, d_rect, 0, center, 0); 
-
-                -- for i = 0, foam.columns, 1 do
-                --         local s_rect = { x = gw * i, y = 0, w = gw, h = gh };
-                --         local d_rect = { x = gw * i, y = 0, w = gw, h = gh };
-                --         sdl.render_texture_rotated(renderer, texture1, s_rect, d_rect, 0, center, 0); 
-                -- end
-
-                
-
+                game.render_tilemap(camera, renderer, current_time);
 
                 sdl.render_present(renderer);
-                livnet.timeout(16);
+                --livnet.timeout(16);
+                core.sendname("tilemap", livnet.PTYPE_RESPONSE, "");
         end);
-        livnet.timeout(16);
+        --livnet.timeout(16);
+        core.sendname("tilemap", livnet.PTYPE_RESPONSE, "");
 
         livnet.exit_func(function()
                 --sdl.destroy_texture(texture1);
@@ -17312,13 +17304,13 @@ livnet.start(function()
                 draw_gridx(camera, start_pos, end_pos, PIXELS_PER_METER / 2);
 
                 sdl.render_present(renderer);
-                livnet.timeout(16);
+                --livnet.timeout(16);
 
-                --core.sendname("ui", livnet.PTYPE_RESPONSE, "");
+                core.sendname("ui", livnet.PTYPE_RESPONSE, "");
         end);
 
-        livnet.timeout(16);
-        --core.sendname("ui", livnet.PTYPE_RESPONSE, "");
+        --livnet.timeout(16);
+        core.sendname("ui", livnet.PTYPE_RESPONSE, "");
 
         livnet.exit_func(function()
                 sdl.destroy_texture(texture1);
